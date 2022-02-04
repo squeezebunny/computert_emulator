@@ -11,25 +11,39 @@ iota::iota! {
     , LDR, STR
 }
 
+const MEM_SIZE: usize = 16;
+
 fn main() {
-
-    let mut ram = [0u16; 8];
-
-    ram[6] = 8;
-    ram[7] = 16;
-
-    run(&mut ram, 8, vec![
+    let mut test_prg = ez_program(vec![
         (LDR, 6, 0, 0),
         (LDR, 7, 0, 1),
         (ADD, 0, 1, 2),
-        (STR, 0, 0, 0),
+        (STR, 0, 0, 5),
     ]);
 
-    assert_eq!(ram[0], 24);
+    test_prg[14] = 8;
+    test_prg[15] = 16;
 
+    run(&mut test_prg, 4);
+
+    assert_eq!(test_prg[0], 24);
 }
 
-fn run(ram: &mut [u16; 8], steps: usize, prog: Vec<(u8, u8, u8, u8)>) {
+fn ez_program(stuff: Vec<(u8, u8, u8, u8)>) -> [u16; MEM_SIZE] {
+    let mut mem = [0u16; MEM_SIZE];
+    for (i, e) in stuff.into_iter().enumerate() {
+        let num =
+              ((e.0 as u16) << 11) // instruction
+            | ((e.1 & 0b111) as u16) << 8 // destination register
+            | ((e.2 & 0b111) as u16) << 5 // source reg 1
+            | ((e.3 & 0b111) as u16); // source reg 2
+        println!("{:#016b}", num);
+        mem[i] = num;
+    }
+    mem
+}
+
+fn run(ram: &mut [u16; MEM_SIZE], steps: usize) {
     let mut pc = 0usize;
     let mut registers = [0u8; 8];
 
@@ -43,9 +57,9 @@ fn run(ram: &mut [u16; 8], steps: usize, prog: Vec<(u8, u8, u8, u8)>) {
         let ins_r = ram[pc] as u8;
 
         let opcode = ins_l >> 3;
-        let dest = (ins_l & 0b00000111) as usize;
+        let dest = (ins_l & 0b111) as usize;
         let source1 = (ins_r >> 5) as usize;
-        let source2 = ins_r & 0b00011111;
+        let source2 = ins_r & 0b11111;
         let is_const = 1 == ins_r >> 4 & 0b1;
 
         let x = registers[source1];
@@ -59,9 +73,9 @@ fn run(ram: &mut [u16; 8], steps: usize, prog: Vec<(u8, u8, u8, u8)>) {
         use instruction_types::*;
         enum instruction_types {
             INO, // no operation
+            ISM, // set memory/ram
             ISR(u8), // set register
             IASR(u8), // arithmetic set register
-            ISM(u8), // set memory/ram
             IBR(bool), // branch
         }
 
@@ -83,6 +97,14 @@ fn run(ram: &mut [u16; 8], steps: usize, prog: Vec<(u8, u8, u8, u8)>) {
             LSR => { ISR(x >> y) }
             ASR => { ISR(((x as i8) >> y) as u8) }
 
+            BEQ => { IBR(f_zero) }
+            BNEQ => { IBR(!f_zero) }
+            BLT => { IBR(f_neg != f_overflow) }
+            BLE => { IBR(!f_zero && (f_neg == f_overflow)) }
+            BGT => { IBR(f_zero && (f_neg == f_overflow)) }
+            BGE => { IBR(f_neg == f_overflow) }
+            B => { IBR(true) }
+
             BCS => { IBR(f_carry) }
             BCC => { IBR(!f_carry) }
             BMI => { IBR(f_neg) }
@@ -91,13 +113,15 @@ fn run(ram: &mut [u16; 8], steps: usize, prog: Vec<(u8, u8, u8, u8)>) {
             BVC => { IBR(!f_overflow) }
             BHI => { IBR(f_carry && !f_zero) }
             BLS => { IBR(!(f_carry && !f_zero)) }
-            B => { IBR(true) }
+
+            LDR => { ISR(ram[y as usize] as u8) }
+            STR => { ISM }
 
             _ => { panic!("undefined opcode used: {}", opcode)}
         } {
             INO => { }
+            ISM => { ram[dest as usize] = registers[y as usize] as u16 }
             IBR(b) => { if b { pc += (y as usize); } }
-            ISM(x) => { ram[y as usize] = x as u16 }
             ISR(o) => {
                 registers[dest] = o;
                 f_zero = (o == 0);
@@ -117,7 +141,7 @@ fn run(ram: &mut [u16; 8], steps: usize, prog: Vec<(u8, u8, u8, u8)>) {
 
         pc += 1;
 
-        sleep(Duration::from_secs(1) / 2);
+        //sleep(Duration::from_secs(1) / 2);
     }
 }
 
